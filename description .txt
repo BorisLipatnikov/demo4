@@ -1,0 +1,247 @@
+PIC 18F45Q43-I/PT
+TMR0 - какобычно
+TMR1 - таймер отладки, зарезервирован
+TMR2 - задает шим для вентилятора
+TMR3 - вызов TermoControl(), 2s 
+TMR4 - опрос кнопок , период 50мс
+TMR5 - таймер Function(); период ~4с
+отключен кварц, используется внутренний генератор на 64МГц
+I2C регистры на клавиатуру и управление 
+Используется смещение под ЮСБ загрузчик , 0х900
+WDTEN - 2с, STVREN-res, PWRTS-1ms
+
+//--- Заметки ------------------------------------------------------------------
+-lcd распределить функции и перекинуть символы
+-перекинуть функции userinterface   
+-собрать файлы в рдм
+-диммер обновить
+
+//--- Подключения и установки --------------------------------------------------
+LCD:
+A0- p24 - RA5
+E - p23 - RA4
+RW - GND
+//RES - DD6:IO7 , 0-сброс, 1мкс -> 1-актив, пост пауза 10мкс
+RES на керамике 0,1
+ChipSelect - p19 - RA0, 1=L(E1)/ 0=R(E2) 
+DB0 - p38 - RD0
+DB1 - p39 - RD1
+DB2 - p40 - RD2
+DB3 - p41 - RD3
+DB4 - p2  - RD4
+DB5 - p3  - RD5
+DB6 - p4  - RD6
+DB7 - p5  - RD7
+PWM_BacklightContrl - p1 - RC7 + подсветка плёнки
+
+Плёнка, кнопки:
+I2C адрес - 0111 100
+DD6:~INT - p42 - RC4, прерывание изменения входов
+опрос по TMR4_HasOverflowOccured() , период 50мс
+IO0 - out - DMX Led, ON(1)/OFF(0)
+IO1 - inp(pull up) - SB1(ENT) 
+IO2 - inp(pull up) - SB2(UP) 
+IO3 - inp(pull up) - SB3(ESC) + разворот экрана, функ основного меню
+IO4 - inp(pull up) - SB4(DWN) 
+IO5 - inp(pull up) - SB5(активация режима направка)
+IO6 - NC
+IO7 - out - LCD_Res - NC
+подсветка плёнки Х3:р1, управление PWM_BacklightContrl совмещено с LCD
+
+Блок ШИМ:  
+MCU                      DD4 inp       
+p15 (RB5) - PWM 1_1 - Ch1 - p1  - крн
+p14 (RB4) - PWN 1_2 - Ch2 - p3  - зел 
+p11 (RB3) - PWM 2_1 - Ch3 - p5  - син
+p8  (RB0) - PWM 2_2 - Ch6 - p9  - циан
+p9  (RB1) - PWM 3_1 - Ch5 - p11 - амбер
+p10 (RB2) - PWM 3_2 - Ch4 - p13 - лайм
+регулировка частоты 1100<-1200->1300 -> 25к
+
+Регистр DD7 
+I2C адрес - 0111 101 , all out
+IO0 - Ch1En - RedEn
+IO1 - Ch2En - GreenEn
+IO2 - Ch3En - BlueEn
+IO3 - Ch4En - LimeEn
+IO4 - Ch5En - AmberEn
+IO5 - Ch6En - CyanEn
+
+Термоконтроль:
+TMR3 - 1s , триггер АЦП , 4 автоизмерения с усреднением, в прерыв вызов TermoControl()
+ADC_Termo - p26 - ANE1 (RE1), вход с термистора, ACD ret ADFILTR, 8b!!
+ADC +Ref - FVR 4096 mV  , 1бит == 1мВ
+ADCRC CS=1 , TAD = 1.7us , Fs ~ 36.7kHz
+PWM_Fan - p44 - RС6
+CCP1(PWM1)+TMR2 - 15кГц, упр через PWM1_LoadDutyValue(uint16_t dutyValue);
+контроль обрыва термодатчика
+40С - откл вентилятора
+45С - вкл на малой мощности (8В)
+50С - вкл на средней мощеости (10В)
+60С - вкл на полной мощности (12В)
+70С - 80С - линейное снижение вых мощности до хз%
+80С - отключение , вент макс.
+
+DMX:
+UART1_DMX_Tx - p32 (RC0) 
+UART1_DMX_Rx - p35 (RC1)  
+DMX_Dir - p27 - RE2
+
+USB:
+USB_Send - p31 (RA6) - UART3_Tx, отправка в порт
+USB_Receive - p30 (RA7) - UART3_Rx, приём из порта
+асинхрон 8 бит, без четности, скорость 9600(дефолт)
+увеличение скорости ?
+
+EEPROM DD3:
+I2C - 1010 011 , адрес устройства 110(А0,А1,А2)
+адресация данных на EEPROM (адрес - значение):
+0x00 - версия данных, для SOFT_ID (тип/версия файла);
+0x01 - количество пресетов;
+0x06:0x07 - 1FFF окончание адресного пространства;
+0x20 - адрес первого пресета;
+3х8 - 24 байт на 1 пресет,
+6 байт каналов RGBLAC + 00:00 + 16 байт подпись пресета
+0x09C0 - табл галогена
+0x0AD0 - табл СТ
+
+I2C:
+SDA - p36 - RС2
+SCL - p37 - RС3
+//совмещен  ICSP MCU и EEPROM ; отмена, вынесен отдельно
+сторожевой таймер , непонятки реализации. TMR6
+100 кГц ?! , 7б адрес 
+ост настройки ...
+
+//--- Программные функции ------------------------------------------------------
+MCU EEPROM (0х380000-0x3803FF):
+0h:5h - UID
+8h:1Fh- Device_Label
+20h - dmx addressH
+21h - dmx addresL
+22h - personality
+23h - curve
+24h - pwm freq mod
+25h - ActivPreset, 
+
+Function:
+0-3 - не активен
+4-91 - установка частоты, шаг 4ед
+92-95- установка квадратичной кривой
+96-99- установка линейной кривой
+100-103 - активация режима галогена 
+104-107 - активация театрального режима
+TMR5 - таймер периода Function(); ~4с
+
+Канал Preset (цветофильтры):
+на данный момент 102 пресета
+из них 13 - пресеты белого 
+2 ед на 1 пресет
+0-1 - канал не активен, управление отдано
+2-3 - 1-й пресет
+4-5 - 2-й пресет
+204-205 - 102-й пресет
+206-255 - канал не активен, управление отдано
+
+    Режимы работы меню Пресет:
+подтвердить сохранение пресета Ent, 
+активируется автозапуск пресета при вкл прибора
+сброс пресета - откл запуска, выход в осн меню
+1. Dimmer, при отсутствии сигнала вкл полная яркость
+ручной выбор пресетов из меню.
+    
+    Режим Галоген:
+галоген без ТИНТа.
+ТИНТ работает только с ССТ
+
+    Профиль RGB:
+1. Dimmer
+2. Red
+3. Green
+4. Blue
+5. Strob
+удалён - 6. Preset
+
+    Профиль RGB_CT:
+1. Dimmer
+2. Red
+3. Green
+4. Blue
+5. Saturation (0-CT, 255-RGB)
+6. CT (2500 (2700)–8000K)
+7. TINT
+8. Strob
+9. Function (настройка прибора с пульта)
+10.Preset
+
+    Профиль HSI_CT:
+1. Dimmer
+2. Hue H
+3. Hue L
+4. Saturation (0-CT, 255-RGB)
+5. CT (2500 (2700)–8000K)
+6. TINT
+7. Strob
+8. Function (настройка прибора с пульта)
+9. Preset
+
+    Профиль STUDIO:
+1. Dimmer
+2. CT (2500 (2700)–8000K)
+3. TINT
+4. Strobe
+5. Function (настройка прибора с пульта)
+
+    Профиль DIRECT(default):
+1. Dimmer
+2. Red
+3. Green
+4. Blue
+5. Lime
+6. Amber
+7. Cyan
+8. Strob
+
+
+//---- Всякий сброс ------------------------------------------------------------
+
+
+
+
+
+ RE2 = ~RE2; // !!!!!!!!!!!!!!!!!!
+
+
+
+
+// струк для данных линеаризации    
+struct RangeLinear {
+    uint8_t hight_node;
+    uint8_t hight_value;
+    uint8_t low_node;
+    uint8_t low_value;
+    uint8_t lvl;
+};
+
+
+
+
+struct Ratio {
+    uint8_t R130_50;
+    uint8_t G5_2;
+    uint8_t G255_50;
+    uint8_t G128_255;
+    uint8_t B130_255;
+};
+  
+
+            RED = result_linearization (lvl_node, func_dat.data[index_struct].R, 
+                    lvl_node+5, func_dat.data[index_struct-1].R, lvl);
+            GREEN = result_linearization(lvl_node, func_dat.data[index_struct].G, 
+                    lvl_node+5, func_dat.data[index_struct-1].G, lvl);
+            BLUE = result_linearization(lvl_node, func_dat.data[index_struct].B, 
+                    lvl_node+5, func_dat.data[index_struct-1].B, lvl);
+            LIME = result_linearization(lvl_node, func_dat.data[index_struct].L, 
+                    lvl_node+5, func_dat.data[index_struct-1].L, lvl);
+            AMBER = result_linearization(lvl_node, func_dat.data[index_struct].A, 
+                    lvl_node+5, func_dat.data[index_struct-1].A, lvl);
